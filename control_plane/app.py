@@ -7,6 +7,7 @@ Two audiences:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,7 @@ from common.schemas import (
     ScaleRequest,
     StopContainerCommand,
 )
+from control_plane.db import DeploymentStore
 from control_plane.monitor import Reconciler
 from control_plane.state import ClusterState
 
@@ -34,10 +36,19 @@ log = logging.getLogger("mc.control")
 settings = ControlPlaneSettings()
 state = ClusterState()
 reconciler = Reconciler(state, settings)
+store: DeploymentStore | None = None  # created in lifespan
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global store
+    store = DeploymentStore(settings.database_url)
+    # Rehydrate desired state; running containers are re-adopted from heartbeats.
+    loaded = await asyncio.to_thread(store.load_all)
+    async with state.lock:
+        for dep in loaded:
+            state.load_deployment(dep)
+    log.info("loaded %d deployment(s) from %s", len(loaded), settings.database_url)
     await reconciler.start()
     log.info("control plane up on %s:%s", settings.host, settings.port)
     yield
@@ -75,6 +86,7 @@ async def create_deployment(spec: DeploymentSpec) -> DeploymentView:
             raise HTTPException(409, f"deployment '{spec.name}' already exists")
         dep = state.create_deployment(spec)
         view = state.deployment_view(dep)
+    await asyncio.to_thread(store.save, dep)
     log.info("created deployment %s (%s x%d)", spec.name, spec.image, spec.replicas)
     return view
 
@@ -101,7 +113,9 @@ async def scale_deployment(name: str, req: ScaleRequest) -> DeploymentView:
         if dep is None:
             raise HTTPException(404, f"no deployment '{name}'")
         dep.desired_replicas = req.replicas
+        dep_id = dep.id
         view = state.deployment_view(dep)
+    await asyncio.to_thread(store.update_desired, dep_id, req.replicas)
     log.info("scaled %s -> %d replicas", name, req.replicas)
     return view
 
@@ -119,7 +133,9 @@ async def delete_deployment(name: str) -> dict:
                 stops.append((node.base_url, StopContainerCommand(
                     replica_id=replica.id, container_id=replica.container_id)))
             state.remove_replica(replica)
-        state.deployments.pop(dep.id, None)
+        dep_id = dep.id
+        state.deployments.pop(dep_id, None)
+    await asyncio.to_thread(store.delete, dep_id)
     await reconciler.send([], stops)
     log.info("deleted deployment %s", name)
     return {"deleted": name}

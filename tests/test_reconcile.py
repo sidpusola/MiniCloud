@@ -57,6 +57,7 @@ async def _scenario() -> None:
     settings = ControlPlaneSettings()
     state = ClusterState()
     rec = StubReconciler(state, settings)
+    rec._started_at = time.time() - 999   # bypass startup grace; this tests scheduling
 
     # Two nodes, 4 cores / 4096 MB each.
     async with state.lock:

@@ -23,6 +23,16 @@ class ControlPlaneSettings(BaseSettings):
     # How often the reconcile/self-heal loop runs.
     reconcile_interval_s: float = 4.0
 
+    # On startup the control plane waits this long before scheduling *new*
+    # replicas, giving already-running workers time to re-report (and have their
+    # containers adopted) so a restart doesn't spawn duplicate containers.
+    startup_grace_s: float = 12.0
+
+    # Where desired state (deployments) is persisted. SQLite by default; point
+    # at Postgres for a real deployment, e.g.
+    #   MC_CP_DATABASE_URL=postgresql+psycopg://user:pw@host/mini_cloud
+    database_url: str = "sqlite:///mini_cloud.db"
+
 
 class WorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MC_WORKER_", env_file=".env", extra="ignore")

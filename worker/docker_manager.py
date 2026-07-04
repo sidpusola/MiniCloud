@@ -90,6 +90,7 @@ class DockerManager:
             status = c.status  # created / running / exited / dead ...
             reports.append(ContainerReport(
                 replica_id=replica_id,
+                deployment_id=c.labels.get(LABEL_DEPLOYMENT),
                 container_id=c.id,
                 docker_status=status,
                 healthy=self._is_healthy(c, status),

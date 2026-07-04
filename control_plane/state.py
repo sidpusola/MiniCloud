@@ -153,7 +153,12 @@ class ClusterState:
         for report in hb.containers:
             replica = self.replicas.get(report.replica_id)
             if replica is None:
-                continue  # orphan; the reconcile loop will order a stop
+                # Unknown replica. If its deployment still exists (e.g. the
+                # control plane restarted and lost in-memory replicas), adopt
+                # the running container instead of treating it as an orphan.
+                replica = self._maybe_adopt(node, report)
+                if replica is None:
+                    continue  # true orphan; the reconcile loop will order a stop
             if report.container_id and not replica.container_id:
                 replica.container_id = report.container_id
             if report.host_port and not replica.host_port:
@@ -167,6 +172,29 @@ class ClusterState:
             elif report.docker_status in ("exited", "dead", "removing"):
                 replica.status = ReplicaStatus.FAILED
         return node
+
+    def _maybe_adopt(self, node: Node, report) -> Optional["Replica"]:
+        """Re-attach a running container to a known deployment after a restart.
+
+        Returns the (re)created Replica, or None if the container belongs to no
+        known deployment (a genuine orphan to be stopped).
+        """
+        dep = self.deployments.get(report.deployment_id) if report.deployment_id else None
+        if dep is None:
+            return None
+        replica = Replica(
+            id=report.replica_id,               # preserve id so it keeps matching
+            deployment_id=dep.id,
+            cpu_req=dep.cpu_req,
+            mem_req_mb=dep.mem_req_mb,
+            node_id=node.id,
+            container_id=report.container_id,
+            host_port=report.host_port,
+            status=ReplicaStatus.PENDING,
+        )
+        self.replicas[replica.id] = replica
+        self.reserve(node, replica)
+        return replica
 
     # ---- reservation accounting ---------------------------------------- #
     def reserve(self, node: Node, replica: Replica) -> None:
@@ -209,6 +237,10 @@ class ClusterState:
         )
         self.deployments[dep.id] = dep
         return dep
+
+    def load_deployment(self, dep: Deployment) -> None:
+        """Insert a deployment rehydrated from the database at startup."""
+        self.deployments[dep.id] = dep
 
     # ---- view builders ------------------------------------------------- #
     def _replica_view(self, r: Replica) -> ReplicaView:

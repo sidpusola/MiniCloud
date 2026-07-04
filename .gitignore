@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .env
+
+# SQLite state database
+*.db
+*.sqlite3

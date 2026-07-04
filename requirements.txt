@@ -5,6 +5,9 @@ pydantic==2.7.4
 pydantic-settings==2.3.4
 httpx==0.27.0
 
+# Control-plane persistence (SQLite by default; swap DATABASE_URL for Postgres)
+SQLAlchemy==2.0.31
+
 # Worker agent only (needs Docker + host metrics)
 docker==7.1.0
 psutil==6.0.0

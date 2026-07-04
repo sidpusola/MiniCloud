@@ -41,6 +41,7 @@ class DeploymentStatus(str, Enum):
 class ContainerReport(BaseModel):
     """Status of one container as seen by the worker's Docker daemon."""
     replica_id: str
+    deployment_id: Optional[str] = None   # from the mc.deployment label; enables adoption
     container_id: Optional[str] = None
     docker_status: str = "unknown"   # created/running/exited/dead...
     healthy: bool = False

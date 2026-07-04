@@ -19,6 +19,8 @@ crash or worker nodes die.
 | Horizontal scaling | `POST /deployments/{name}/scale` |
 | Service discovery + dynamic routing | [proxy/proxy.py](proxy/proxy.py) refreshes routes from `/routes` |
 | Load balancing | round-robin across healthy replicas with fail-over |
+| Persistent desired state | [control_plane/db.py](control_plane/db.py) — deployments in SQLite/Postgres, survive restart |
+| Restart recovery | running containers re-adopted from heartbeats (`_maybe_adopt`) instead of duplicated |
 
 ## Architecture
 
@@ -193,12 +195,41 @@ Because scale-up/scale-down, container-crash recovery, and node-failure
 rescheduling all funnel through the same desired-vs-actual reconciliation, the
 behaviour is consistent and easy to reason about.
 
+## Persistence & restart recovery
+
+Only **desired state** is persisted — deployments, in [control_plane/db.py](control_plane/db.py)
+(SQLAlchemy, SQLite by default, `MC_CP_DATABASE_URL` for Postgres). Nodes and
+replicas are *observed* state, deliberately not stored; they are rebuilt after a
+restart from worker heartbeats. This keeps the database small and write-light
+(no churn on every heartbeat) and mirrors how real orchestrators separate
+declared intent from live cluster state.
+
+When the control plane restarts:
+
+1. It **reloads deployments** from the database.
+2. Surviving workers keep running their containers and heartbeat them. Each
+   container carries `mc.deployment`/`mc.replica` labels, so the control plane
+   **adopts** them (`ClusterState._maybe_adopt`) — re-creating the replica
+   records and re-reserving resources — instead of treating them as orphans to
+   kill.
+3. A **startup grace window** (`MC_CP_STARTUP_GRACE_S`, default 12s) suppresses
+   scheduling of *new* replicas until workers have had a chance to re-report, so
+   a restart never spawns duplicate containers for work that's already running.
+
+Try it: create a deployment, restart `python -m control_plane`, and the
+deployment is still there (`GET /deployments`) with its containers intact — no
+redeploy, no duplicates.
+
 ## Tests
 
-The trickiest logic — scheduling, failure detection, rescheduling, scaling — is
-covered by an offline simulation that drives the real control-plane code with
-stubbed workers (no Docker needed): [tests/test_reconcile.py](tests/test_reconcile.py).
+The trickiest logic runs offline against the real control-plane code with
+stubbed workers (no Docker needed):
+
+- [tests/test_reconcile.py](tests/test_reconcile.py) — scheduling, failure
+  detection, rescheduling, scaling, capacity limits.
+- [tests/test_persistence.py](tests/test_persistence.py) — deployment store
+  round-trip, startup grace window, and container adoption on restart.
 
 ```bash
-python -m pytest -q          # or:  python tests/test_reconcile.py
+python -m pytest -q          # or run either file directly with python
 ```

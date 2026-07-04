@@ -46,8 +46,16 @@ class Reconciler:
         self._client = httpx.AsyncClient(timeout=10.0)
         self._task: asyncio.Task | None = None
         self._stopping = False
+        self._started_at = time.time()
+
+    def _in_startup_grace(self) -> bool:
+        """During the grace window we hold off on placing *new* replicas so that
+        workers surviving a control-plane restart can re-report (and have their
+        containers adopted) before we conclude anything is missing."""
+        return (time.time() - self._started_at) < self.settings.startup_grace_s
 
     async def start(self) -> None:
+        self._started_at = time.time()  # grace window counts from loop start
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -154,12 +162,13 @@ class Reconciler:
     def _scale_deployments(self) -> tuple[list[tuple[str, StartContainerCommand]], list[StopAction]]:
         starts: list[tuple[str, StartContainerCommand]] = []
         stops: list[StopAction] = []
+        in_grace = self._in_startup_grace()
 
         for dep in self.state.deployments.values():
             active = self._active_replicas(dep)
             diff = dep.desired_replicas - len(active)
 
-            if diff > 0:  # scale up
+            if diff > 0 and not in_grace:  # scale up (suppressed during startup grace)
                 for _ in range(diff):
                     node = choose_node(self.state, dep.cpu_req, dep.mem_req_mb)
                     if node is None:
