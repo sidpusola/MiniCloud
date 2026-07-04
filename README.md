@@ -185,9 +185,14 @@ The control plane's [reconcile loop](control_plane/monitor.py) runs every few
 seconds and is the single source of convergence:
 
 1. **Age out nodes** by heartbeat freshness: HEALTHY → UNREACHABLE → DEAD.
-2. **Reap** replicas on DEAD nodes (rescheduled elsewhere), FAILED replicas
-   (crashed/unhealthy containers), and orphan containers we no longer own.
-3. **Scale** every deployment to its desired replica count, asking the
+2. **Detect missing containers**: a RUNNING replica whose container stops
+   appearing in its node's heartbeat reports (e.g. `docker rm -f`, or the
+   whole daemon vanishes) is marked FAILED after `container_missing_after_s`.
+   This complements the heartbeat path, which only catches containers that
+   *exit but remain listed*.
+3. **Reap** replicas on DEAD nodes (rescheduled elsewhere), FAILED replicas
+   (crashed/removed/unhealthy containers), and orphan containers we no longer own.
+4. **Scale** every deployment to its desired replica count, asking the
    [scheduler](control_plane/scheduler.py) to place new replicas on the nodes
    with the most free CPU/memory, and issuing start/stop commands to workers.
 

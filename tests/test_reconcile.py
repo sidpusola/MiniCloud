@@ -75,7 +75,7 @@ async def _scenario() -> None:
     assert len(by_node) == 2, "worst-fit should spread across both nodes"
     assert state.nodes["nodeA"].reserved_cpu + state.nodes["nodeB"].reserved_cpu == 3.0
 
-    # Container failure -> reaped and replaced.
+    # Container failure (exited, still reported) -> reaped and replaced.
     dead = state.replicas_of(dep.id)[0]
     async with state.lock:
         dead.status = ReplicaStatus.FAILED
@@ -83,6 +83,16 @@ async def _scenario() -> None:
     _, running, _ = _counts(state, dep.id)
     assert running == 3, "failed container should self-heal back to 3"
     assert dead.id not in state.replicas, "failed replica reaped"
+
+    # Container *removed* (vanishes from reports, e.g. `docker rm -f`) -> the
+    # missing-container detector should fail it and reschedule a replacement.
+    vanished = state.replicas_of(dep.id)[0]
+    async with state.lock:
+        vanished.last_seen = time.time() - 999   # stopped being reported long ago
+    await rec.reconcile_once()
+    _, running, _ = _counts(state, dep.id)
+    assert running == 3, "removed container should self-heal back to 3"
+    assert vanished.id not in state.replicas, "vanished replica reaped"
 
     # Node failure -> replicas rescheduled to survivor.
     async with state.lock:

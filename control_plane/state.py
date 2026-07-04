@@ -70,6 +70,9 @@ class Replica:
     host_port: Optional[int] = None
     status: ReplicaStatus = ReplicaStatus.PENDING
     created_at: float = field(default_factory=time.time)
+    # Last time the worker's Docker daemon reported this container present.
+    # Used to detect containers that vanish (removed, not merely exited).
+    last_seen: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -163,6 +166,7 @@ class ClusterState:
                 replica.container_id = report.container_id
             if report.host_port and not replica.host_port:
                 replica.host_port = report.host_port
+            replica.last_seen = time.time()  # container is still present on the node
 
             # Don't resurrect a replica we intentionally stopped.
             if replica.status == ReplicaStatus.STOPPED:

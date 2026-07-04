@@ -23,6 +23,12 @@ class ControlPlaneSettings(BaseSettings):
     # How often the reconcile/self-heal loop runs.
     reconcile_interval_s: float = 4.0
 
+    # A RUNNING replica whose container stops appearing in its node's heartbeat
+    # reports for this long (e.g. it was `docker rm`'d) is declared FAILED and
+    # rescheduled. Must exceed a couple of heartbeat intervals to tolerate a
+    # transient missed report / just-started-not-yet-reported race.
+    container_missing_after_s: float = 8.0
+
     # On startup the control plane waits this long before scheduling *new*
     # replicas, giving already-running workers time to re-report (and have their
     # containers adopted) so a restart doesn't spawn duplicate containers.

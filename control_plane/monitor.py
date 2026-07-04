@@ -83,6 +83,7 @@ class Reconciler:
 
         async with self.state.lock:
             self._age_out_nodes()
+            self._detect_missing_containers()
             stops += self._reap_dead_nodes()
             stops += self._reap_failed_replicas()
             stops += self._reap_orphans()
@@ -104,6 +105,29 @@ class Reconciler:
                 node.status = NodeStatus.UNREACHABLE
             else:
                 node.status = NodeStatus.HEALTHY
+
+    def _detect_missing_containers(self) -> None:
+        """Fail replicas whose container has vanished from its node's reports.
+
+        A container that merely *exits* is still listed by Docker and marked
+        FAILED on heartbeat. But one that is *removed* (``docker rm -f``) or lost
+        with the Docker daemon disappears from reports entirely — heartbeat can't
+        flag what it can't see. Here we catch that: a RUNNING replica on a
+        HEALTHY node that hasn't been reported for `container_missing_after_s`
+        is declared FAILED so the reconcile loop reschedules it.
+        """
+        now = time.time()
+        threshold = self.settings.container_missing_after_s
+        for replica in self.state.replicas.values():
+            if replica.status != ReplicaStatus.RUNNING:
+                continue
+            node = self.state.nodes.get(replica.node_id) if replica.node_id else None
+            if node is None or node.status != NodeStatus.HEALTHY:
+                continue  # dead/unreachable nodes handled by _reap_dead_nodes
+            if now - replica.last_seen > threshold:
+                log.warning("replica %s container missing from %s reports, marking FAILED",
+                            replica.id, node.id)
+                replica.status = ReplicaStatus.FAILED
 
     def _reap_dead_nodes(self) -> list[StopAction]:
         """Free every replica on a DEAD node so deployments fall below desired
@@ -252,6 +276,7 @@ class Reconciler:
                 replica.container_id = result.container_id
                 replica.host_port = result.host_port
                 replica.status = result.status
+                replica.last_seen = time.time()  # start grace clock from confirmed start
 
     async def _send_stop(self, base_url: str, cmd: StopContainerCommand) -> None:
         try:
