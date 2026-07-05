@@ -238,3 +238,17 @@ stubbed workers (no Docker needed):
 ```bash
 python -m pytest -q          # or run either file directly with python
 ```
+
+### End-to-end smoke test
+
+With the cluster running (control plane + at least one worker + proxy, and
+Docker available), [scripts/smoke_test.ps1](scripts/smoke_test.ps1) drives the
+whole flow automatically: deploy nginx, wait for replicas to run, fetch the app
+through the proxy, kill a container with `docker rm -f`, and confirm the platform
+self-heals back to the desired count.
+
+```powershell
+.\scripts\smoke_test.ps1            # add -Cleanup to delete the deployment after
+```
+
+It prints PASS/FAIL per step and exits non-zero on failure.
